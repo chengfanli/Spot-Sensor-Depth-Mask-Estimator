@@ -1,5 +1,6 @@
 import torch.nn as nn
 import math
+import torch
 
 
 def conv_bn(inp, oup, stride):
@@ -64,9 +65,9 @@ class InvertedResidual(nn.Module):
             return self.conv(x)
 
 
-class MobileNetV2(nn.Module):
-    def __init__(self, n_class=1000, input_size=224, width_mult=1.):
-        super(MobileNetV2, self).__init__()
+class MobileNetV2Segmentation(nn.Module):
+    def __init__(self, input_size=480, width_mult=1.):
+        super(MobileNetV2Segmentation, self).__init__()
         block = InvertedResidual
         input_channel = 32
         last_channel = 1280
@@ -81,8 +82,6 @@ class MobileNetV2(nn.Module):
             [6, 320, 1, 1],
         ]
 
-        # building first layer
-        assert input_size % 32 == 0
         # input_channel = make_divisible(input_channel * width_mult)  # first channel is always 32!
         self.last_channel = make_divisible(last_channel * width_mult) if width_mult > 1.0 else last_channel
         self.features = [conv_bn(3, input_channel, 2)]
@@ -100,16 +99,22 @@ class MobileNetV2(nn.Module):
         # make it nn.Sequential
         self.features = nn.Sequential(*self.features)
 
-        # building classifier
-        self.classifier = nn.Linear(self.last_channel, n_class)
+        self.output_layer = nn.Sequential(
+            nn.Conv2d(self.last_channel, 128, kernel_size=3, padding=1),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(128, 1, kernel_size=1)  # Output a single-channel mask
+        )
+        
+        # # building classifier
+        # self.classifier = nn.Linear(self.last_channel, n_class)
 
         self._initialize_weights()
 
     def forward(self, x):
         x = self.features(x)
-        x = x.mean(3).mean(2)
-        x = self.classifier(x)
-        return x
+        x = nn.functional.interpolate(x, size=(480, 640), mode='bilinear', align_corners=False)
+        x = self.output_layer(x)
+        return torch.sigmoid(x)
 
     def _initialize_weights(self):
         for m in self.modules():
@@ -128,7 +133,7 @@ class MobileNetV2(nn.Module):
 
 
 def mobilenet_v2(pretrained=True):
-    model = MobileNetV2(width_mult=1)
+    model = MobileNetV2Segmentation(width_mult=1)
 
     if pretrained:
         try:
@@ -137,7 +142,7 @@ def mobilenet_v2(pretrained=True):
             from torch.utils.model_zoo import load_url as load_state_dict_from_url
         state_dict = load_state_dict_from_url(
             'https://www.dropbox.com/s/47tyzpofuuyyv1b/mobilenetv2_1.0-f2a8633.pth.tar?dl=1', progress=True)
-        model.load_state_dict(state_dict)
+        model.load_state_dict(state_dict, strict=False)
     return model
 
 
